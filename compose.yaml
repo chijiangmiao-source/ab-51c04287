@@ -1,0 +1,71 @@
+# Cryo magnet ramp control station.
+#
+# Host ports are configurable: API_HOST_PORT / INSTRUMENT_HOST_PORT.
+#   API_HOST_PORT=9000 docker compose up
+# brings the API up on localhost:9000. /healthz is exposed by both services
+# and wired into compose healthchecks (executor waits for healthy deps).
+name: magnet-ramp
+
+services:
+  api:
+    build: .
+    command: ["python", "-m", "app.api"]
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: "8080"
+      API_DB: /data/api.db
+      INSTRUMENT_URL: http://instrument:9100
+      LEASE_SECONDS: "5"
+    volumes:
+      - api-data:/data
+    ports:
+      - "${API_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
+    depends_on:
+      instrument:
+        condition: service_healthy
+
+  instrument:
+    build: .
+    command: ["python", "-m", "app.instrument"]
+    environment:
+      INSTRUMENT_HOST: 0.0.0.0
+      INSTRUMENT_PORT: "9100"
+      INSTRUMENT_DB: /data/instrument.db
+    volumes:
+      - instrument-data:/data
+    ports:
+      - "${INSTRUMENT_HOST_PORT:-9100}:9100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:9100/healthz',timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 10
+
+  executor:
+    build: .
+    command: ["python", "-m", "app.executor"]
+    environment:
+      EXECUTOR_API_URL: http://api:8080
+      INSTRUMENT_URL: http://instrument:9100
+      EXECUTOR_ID: executor-1
+      CLAIM_WAIT_SECONDS: "1"
+      RENEW_INTERVAL_SECONDS: "1"
+      # Set CRASH_AFTER_APPLY=some-op-id to rehearse the crash drill.
+      CRASH_AFTER_APPLY: ""
+    # A crashed executor is restarted by the orchestrator; the reclaimed
+    # lease + fencing token then converge the interrupted operation.
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      instrument:
+        condition: service_healthy
+
+volumes:
+  api-data:
+  instrument-data:
