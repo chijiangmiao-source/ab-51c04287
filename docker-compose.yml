@@ -1,0 +1,63 @@
+services:
+  api:
+    build: .
+    command: ["api"]
+    environment:
+      API_PORT: "8080"
+      API_DB_PATH: /data/api.db
+      LEASE_TTL_SECONDS: "${LEASE_TTL_SECONDS:-10}"
+    ports:
+      # 宿主端口可配置：API_HOST_PORT，默认 18080
+      - "${API_HOST_PORT:-18080}:8080"
+    volumes:
+      - api-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  instrument:
+    build: .
+    command: ["instrument"]
+    environment:
+      INSTRUMENT_PORT: "8081"
+      INSTRUMENT_DB_PATH: /data/instrument.db
+      APPLY_DELAY_SECONDS: "${APPLY_DELAY_SECONDS:-0.05}"
+    ports:
+      - "${INSTRUMENT_HOST_PORT:-18081}:8081"
+    volumes:
+      - instrument-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=2).status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  executor:
+    build: .
+    command: ["executor"]
+    environment:
+      API_URL: http://api:8080
+      INSTRUMENT_URL: http://instrument:8081
+      POLL_INTERVAL_SECONDS: "${POLL_INTERVAL_SECONDS:-0.5}"
+      CRASH_AFTER_APPLY: "${CRASH_AFTER_APPLY:-}"
+      CRASH_BEFORE_APPLY: "${CRASH_BEFORE_APPLY:-}"
+      CRASH_STATE_DIR: /tmp
+    depends_on:
+      api:
+        condition: service_healthy
+      instrument:
+        condition: service_healthy
+    # 执行器无监听端口，禁用镜像中面向 API 的默认健康检查
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+volumes:
+  api-data:
+  instrument-data:
